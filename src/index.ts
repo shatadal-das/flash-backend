@@ -1,45 +1,50 @@
-import express, { Request, Response } from "express";
+import "dotenv/config";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { env } from "./config/env";
-import { connectDatabase, disconnectDatabase } from "./config/database";
-import { disconnectRedis } from "./config/redis";
-import { initRedisSub, disconnectRedisSub } from "./config/redisSub";
-import { errorHandler, rateLimiter } from "./middlewares";
-import routes from "./routes";
+
+import { initDb, closeDb } from "./db";
+import { initRedis, closeRedis, rateLimiter } from "./redis";
+
+import authRoutes from "./routes/auth";
+import productRoutes from "./routes/products";
+import orderRoutes from "./routes/orders";
+import vendorRoutes from "./routes/vendor";
+import deliveryRoutes from "./routes/delivery";
+import couponRoutes from "./routes/coupons";
+import deliveryInfoRoutes from "./routes/deliveryInfo";
+import adminRoutes from "./routes/admin";
+import healthRoutes from "./routes/health";
 
 const app = express();
+const PORT = parseInt(process.env.PORT || "3000", 10);
 
-// Trust reverse proxy (Nginx, AWS ALB, Cloudflare, Traefik)
 app.set("trust proxy", 1);
-
-// ─── Security Headers (Helmet) ───────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: false, // API server does not render HTML
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   })
 );
 
-// ─── Global CORS Middleware ──────────────────────────────
 const defaultOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:3000",
 ];
-
 const allowedOrigins = Array.from(
   new Set([
     ...defaultOrigins,
-    ...(env.CLIENT_URL ? [env.CLIENT_URL] : []),
-    ...env.ALLOWED_ORIGINS,
+    ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+    ...(process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+      : []),
   ])
 );
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -53,11 +58,8 @@ app.use(
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
-
-// Rate limiting: 100 requests per minute per IP
 app.use(rateLimiter({ maxRequests: 100, windowSeconds: 60 }));
 
-// ─── Routes ──────────────────────────────────────────────
 app.get("/", (_req: Request, res: Response) => {
   res.json({
     name: "Flash API",
@@ -66,46 +68,56 @@ app.get("/", (_req: Request, res: Response) => {
   });
 });
 
-app.use("/api", routes);
+app.use("/api/health", healthRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/vendor", vendorRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/delivery", deliveryRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/coupons", couponRoutes);
+app.use("/api/delivery-info", deliveryInfoRoutes);
 
-// ─── Global Error Handler (must be last) ─────────────────
-app.use(errorHandler);
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  const statusCode = err.statusCode || 500;
+  const isOperational = err.isOperational ?? false;
 
-// ─── Server Startup ──────────────────────────────────────
-async function bootstrap(): Promise<void> {
-  await connectDatabase();
-  await initRedisSub();
+  if (statusCode >= 500) {
+    console.error(`[ERROR] ${statusCode} - ${err.message}`, err.stack);
+  }
 
-  const server = app.listen(env.PORT, () => {
-    console.log(`🚀 Flash API running on http://localhost:${env.PORT}`);
-    console.log(`📦 Environment: ${env.NODE_ENV}`);
+  res.status(statusCode).json({
+    success: false,
+    error: {
+      message: isOperational ? err.message : "Internal Server Error",
+      ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
+    },
+  });
+});
+
+async function start() {
+  await initDb();
+  await initRedis();
+
+  const server = app.listen(PORT, () => {
+    console.log(`Flash API running on http://localhost:${PORT}`);
   });
 
-  // Graceful shutdown
   const shutdown = async (signal: string) => {
-    console.log(`\n${signal} received. Shutting down gracefully...`);
+    console.log(`\n${signal} received. Shutting down...`);
     server.close(async () => {
-      await disconnectRedisSub();
-      await disconnectRedis();
-      await disconnectDatabase();
-      console.log("👋 Server shut down cleanly");
+      await closeRedis();
+      await closeDb();
       process.exit(0);
     });
   };
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("unhandledRejection", (reason) => {
-    console.error("Unhandled Rejection:", reason);
-  });
-  process.on("uncaughtException", (error) => {
-    console.error("Uncaught Exception:", error);
-    process.exit(1);
-  });
 }
 
-bootstrap().catch((error) => {
-  console.error("Failed to bootstrap:", error);
+start().catch((err) => {
+  console.error("Failed to start server:", err);
   process.exit(1);
 });
 

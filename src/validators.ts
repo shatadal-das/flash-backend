@@ -1,8 +1,23 @@
+import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { createAppError } from "./auth";
+
+export function validateBody<T extends z.ZodTypeAny>(schema: T) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      const message = result.error.issues
+        .map((issue) => `${issue.path.join(".") || "field"}: ${issue.message}`)
+        .join("; ");
+      throw createAppError(message, 400);
+    }
+    req.body = result.data;
+    next();
+  };
+}
 
 const ROLES = ["ADMIN", "VENDOR", "DELIVERY", "CUSTOMER"] as const;
 
-// ─── Auth Schemas ──────────────────────────────────────────
 export const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z
@@ -23,7 +38,6 @@ export const refreshSchema = z.object({
   refreshToken: z.string().min(1, "Refresh token is required"),
 });
 
-// ─── Vendor / Store Schemas ────────────────────────────────
 export const createStoreSchema = z.object({
   name: z.string().min(2, "Store name must be at least 2 characters").max(100),
   description: z.string().max(500).optional(),
@@ -32,7 +46,6 @@ export const createStoreSchema = z.object({
   longitude: z.number().min(-180).max(180).optional(),
 });
 
-// ─── Product Schemas ───────────────────────────────────────
 export const createProductSchema = z.object({
   name: z.string().min(2, "Product name must be at least 2 characters").max(100),
   description: z.string().min(5, "Product description must be at least 5 characters").max(1000),
@@ -47,7 +60,6 @@ export const createProductSchema = z.object({
 
 export const updateProductSchema = createProductSchema.partial();
 
-// ─── Coupon Schemas ────────────────────────────────────────
 export const createCouponSchema = z.object({
   code: z
     .string()
@@ -69,7 +81,6 @@ export const validateCouponSchema = z.object({
   orderAmount: z.number().min(0, "Order amount is required"),
 });
 
-// ─── Delivery Info Schemas ─────────────────────────────────
 export const deliveryInfoSchema = z.object({
   label: z.string().min(1, "Label is required").max(50).default("Home"),
   name: z.string().min(2, "Recipient name is required").max(100),
@@ -84,7 +95,6 @@ export const deliveryInfoSchema = z.object({
 
 export const updateDeliveryInfoSchema = deliveryInfoSchema.partial();
 
-// ─── Order Schemas ─────────────────────────────────────────
 export const orderItemInputSchema = z.object({
   productId: z.string().min(1, "Product ID is required"),
   quantity: z.number().int("Quantity must be an integer").positive("Quantity must be at least 1"),
@@ -105,20 +115,15 @@ export const createOrderSchema = z.object({
   deliveryLongitude: z.number().min(-180).max(180).optional(),
 });
 
-// ─── Export Inferred Types ─────────────────────────────────
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RefreshInput = z.infer<typeof refreshSchema>;
-
 export type CreateStoreInput = z.infer<typeof createStoreSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
-
 export type CreateCouponInput = z.infer<typeof createCouponSchema>;
 export type ValidateCouponInput = z.infer<typeof validateCouponSchema>;
-
 export type DeliveryInfoInput = z.infer<typeof deliveryInfoSchema>;
 export type UpdateDeliveryInfoInput = z.infer<typeof updateDeliveryInfoSchema>;
-
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type OrderItemInput = z.infer<typeof orderItemInputSchema>;
