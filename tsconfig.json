@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "preserve",
+    "module": "CommonJS",
+    "ignoreDeprecations": "6.0",
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",
@@ -13,7 +14,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "types": ["node"]
   },
   "include": ["src/**/*"],

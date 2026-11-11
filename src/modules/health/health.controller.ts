@@ -1,10 +1,8 @@
-import { Router, Request, Response } from "express";
-import { queryOne } from "../db";
-import { redis } from "../redis";
+import { Request, Response } from "express";
+import { queryOne } from "../../database/query";
+import { redis } from "../../events/redis";
 
-const router = Router();
-
-router.get("/", async (_req: Request, res: Response) => {
+export async function handleHealthCheck(_req: Request, res: Response) {
   const checks: Record<string, string> = {
     server: "ok",
     postgres: "checking",
@@ -34,6 +32,5 @@ router.get("/", async (_req: Request, res: Response) => {
     uptime: process.uptime(),
     checks,
   });
-});
+}
 
-export default router;

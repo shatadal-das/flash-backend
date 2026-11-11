@@ -1,11 +1,7 @@
-import { Router, Request, Response } from "express";
-import { query, queryOne } from "../db";
-import { verifyToken, requireRole } from "../auth";
+import { query, queryOne } from "../../database/query";
+import { DashboardSummary } from "./admin.types";
 
-const router = Router();
-router.use(verifyToken, requireRole(["ADMIN"]));
-
-router.get("/dashboard", async (_req: Request, res: Response) => {
+export async function getDashboardData(): Promise<DashboardSummary> {
   const [stores, ordersAgg, statusGroups, productsAgg, roles, allOrders] = await Promise.all([
     queryOne<{ count: number }>("SELECT count(*)::int AS count FROM stores"),
     queryOne<{ count: number; sum: number }>(
@@ -48,21 +44,17 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     }
   }
 
-  res.status(200).json({
-    success: true,
-    data: {
-      totalActiveStores: stores?.count ?? 0,
-      totalSalesVolume: ordersAgg?.sum ?? 0,
-      totalOrders: ordersAgg?.count ?? 0,
-      ordersByStatus: statusCounts,
-      productsSummary: {
-        totalProducts: productsAgg?.count ?? 0,
-        totalStockUnits: productsAgg?.sum ?? 0,
-      },
-      usersByRole: roles,
-      orders: allOrders,
+  return {
+    totalActiveStores: stores?.count ?? 0,
+    totalSalesVolume: ordersAgg?.sum ?? 0,
+    totalOrders: ordersAgg?.count ?? 0,
+    ordersByStatus: statusCounts,
+    productsSummary: {
+      totalProducts: productsAgg?.count ?? 0,
+      totalStockUnits: productsAgg?.sum ?? 0,
     },
-  });
-});
+    usersByRole: roles,
+    orders: allOrders,
+  };
+}
 
-export default router;

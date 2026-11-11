@@ -1,22 +1,11 @@
-import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { query, queryOne } from "../db";
-import { redis, STOCK_UPDATES_CHANNEL } from "../redis";
-import { verifyToken, requireRole, createAppError } from "../auth";
-import {
-  validateBody,
-  createStoreSchema,
-  createProductSchema,
-  updateProductSchema,
-  CreateStoreInput,
-  CreateProductInput,
-  UpdateProductInput,
-} from "../validators";
+import { query, queryOne } from "../../database/query";
+import { redis } from "../../events/redis";
+import { STOCK_UPDATES_CHANNEL } from "../../events/channels";
+import { createAppError } from "../../middleware/error";
+import { CreateStoreInput, CreateProductInput, UpdateProductInput } from "./vendor.types";
 
-const router = Router();
-router.use(verifyToken, requireRole(["VENDOR"]));
-
-async function getOrCreateStore(vendorId: string) {
+export async function getOrCreateStore(vendorId: string) {
   let store = await queryOne("SELECT * FROM stores WHERE vendor_id = $1", [vendorId]);
   if (!store) {
     const storeId = crypto.randomUUID();
@@ -30,17 +19,14 @@ async function getOrCreateStore(vendorId: string) {
   return store;
 }
 
-router.post("/store", validateBody(createStoreSchema), async (req: Request, res: Response) => {
-  const input: CreateStoreInput = req.body;
-  const vendorId = req.user!.userId;
-
+export async function createStore(vendorId: string, input: CreateStoreInput) {
   const existing = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [vendorId]);
   if (existing) {
     throw createAppError("Vendor already has an active store", 400);
   }
 
   const storeId = crypto.randomUUID();
-  const store = await queryOne(
+  return await queryOne(
     `INSERT INTO stores (id, name, description, address, latitude, longitude, vendor_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
@@ -54,21 +40,14 @@ router.post("/store", validateBody(createStoreSchema), async (req: Request, res:
       vendorId,
     ]
   );
+}
 
-  res.status(201).json({ success: true, data: store });
-});
+export async function getStore(vendorId: string) {
+  return await queryOne("SELECT * FROM stores WHERE vendor_id = $1", [vendorId]);
+}
 
-router.get("/store", async (req: Request, res: Response) => {
-  const store = await queryOne("SELECT * FROM stores WHERE vendor_id = $1", [
-    req.user!.userId,
-  ]);
-  res.status(200).json({ success: true, data: store || null });
-});
-
-router.post("/products", validateBody(createProductSchema), async (req: Request, res: Response) => {
-  const input: CreateProductInput = req.body;
-  const store = await getOrCreateStore(req.user!.userId);
-
+export async function createProduct(vendorId: string, input: CreateProductInput) {
+  const store = await getOrCreateStore(vendorId);
   const sellingPrice = input.currentSellingPrice ?? input.price ?? 0;
   const mrp = input.mrp ?? sellingPrice;
   const productId = crypto.randomUUID();
@@ -105,34 +84,32 @@ router.post("/products", validateBody(createProductSchema), async (req: Request,
     console.error("Redis publish error:", err);
   }
 
-  res.status(201).json({ success: true, data: product });
-});
+  return product;
+}
 
-router.get("/products", async (req: Request, res: Response) => {
-  const store = await getOrCreateStore(req.user!.userId);
-  const products = await query(
+export async function getStoreProducts(vendorId: string) {
+  const store = await getOrCreateStore(vendorId);
+  return await query(
     "SELECT * FROM products WHERE store_id = $1 ORDER BY created_at DESC",
     [store.id]
   );
-  res.status(200).json({ success: true, data: products });
-});
+}
 
-router.get("/products/:id", async (req: Request, res: Response) => {
-  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [req.user!.userId]);
-  const product = await queryOne("SELECT * FROM products WHERE id = $1", [req.params.id]);
+export async function getProductDetail(vendorId: string, productId: string) {
+  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [vendorId]);
+  const product = await queryOne("SELECT * FROM products WHERE id = $1", [productId]);
 
   if (!product) throw createAppError("Product not found", 404);
   if (!store || product.storeId !== store.id) {
     throw createAppError("Forbidden: Product does not belong to your store", 403);
   }
 
-  res.status(200).json({ success: true, data: product });
-});
+  return product;
+}
 
-router.put("/products/:id", validateBody(updateProductSchema), async (req: Request, res: Response) => {
-  const input: UpdateProductInput = req.body;
-  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [req.user!.userId]);
-  const product = await queryOne("SELECT * FROM products WHERE id = $1", [req.params.id]);
+export async function updateProduct(vendorId: string, productId: string, input: UpdateProductInput) {
+  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [vendorId]);
+  const product = await queryOne("SELECT * FROM products WHERE id = $1", [productId]);
 
   if (!product) throw createAppError("Product not found", 404);
   if (!store || product.storeId !== store.id) {
@@ -156,7 +133,7 @@ router.put("/products/:id", validateBody(updateProductSchema), async (req: Reque
      WHERE id = $1
      RETURNING *`,
     [
-      req.params.id,
+      productId,
       input.name ?? null,
       input.description ?? null,
       sellingPrice ?? null,
@@ -181,39 +158,37 @@ router.put("/products/:id", validateBody(updateProductSchema), async (req: Reque
     console.error("Redis publish error:", err);
   }
 
-  res.status(200).json({ success: true, data: updated });
-});
+  return updated;
+}
 
-router.delete("/products/:id", async (req: Request, res: Response) => {
-  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [req.user!.userId]);
-  const product = await queryOne("SELECT * FROM products WHERE id = $1", [req.params.id]);
+export async function deleteProduct(vendorId: string, productId: string) {
+  const store = await queryOne("SELECT id FROM stores WHERE vendor_id = $1", [vendorId]);
+  const product = await queryOne("SELECT * FROM products WHERE id = $1", [productId]);
 
   if (!product) throw createAppError("Product not found", 404);
   if (!store || product.storeId !== store.id) {
     throw createAppError("Forbidden: Product does not belong to your store", 403);
   }
 
-  await query("DELETE FROM products WHERE id = $1", [req.params.id]);
+  await query("DELETE FROM products WHERE id = $1", [productId]);
 
   try {
     await redis.publish(
       STOCK_UPDATES_CHANNEL,
       JSON.stringify({
         type: "product_deleted",
-        productId: req.params.id,
+        productId,
         timestamp: new Date().toISOString(),
       })
     );
   } catch (err) {
     console.error("Redis publish error:", err);
   }
+}
 
-  res.status(200).json({ success: true, data: { message: "Product deleted successfully" } });
-});
-
-router.get("/orders", async (req: Request, res: Response) => {
-  const store = await getOrCreateStore(req.user!.userId);
-  const orders = await query(
+export async function getStoreOrders(vendorId: string) {
+  const store = await getOrCreateStore(vendorId);
+  return await query(
     `SELECT o.*,
        COALESCE((SELECT json_agg(row_to_json(oi.*)) FROM order_items oi WHERE oi.order_id = o.id), '[]'::json) AS items,
        CASE WHEN c.id IS NULL THEN NULL ELSE json_build_object('id', c.id, 'name', c.name, 'email', c.email, 'phone', c.phone, 'role', c.role) END AS customer
@@ -223,8 +198,5 @@ router.get("/orders", async (req: Request, res: Response) => {
      ORDER BY o.created_at DESC`,
     [store.id]
   );
+}
 
-  res.status(200).json({ success: true, data: orders });
-});
-
-export default router;

@@ -1,10 +1,8 @@
-import { Router, Request, Response } from "express";
-import { query, queryOne } from "../db";
-import { stockBroadcaster } from "../redis";
+import { Request, Response } from "express";
+import { stockBroadcaster } from "../../events/broadcaster";
+import * as productService from "./product.service";
 
-const router = Router();
-
-router.get("/stream", (req: Request, res: Response) => {
+export function streamStockUpdates(req: Request, res: Response) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
@@ -24,7 +22,6 @@ router.get("/stream", (req: Request, res: Response) => {
 
   stockBroadcaster.on("stock", onStockUpdate);
 
-  // Ping heartbeat every 20s
   const pingTimer = setInterval(() => {
     res.write(": ping\n\n");
   }, 20000);
@@ -34,40 +31,19 @@ router.get("/stream", (req: Request, res: Response) => {
     stockBroadcaster.off("stock", onStockUpdate);
     res.end();
   });
-});
+}
 
-router.get("/", async (_req: Request, res: Response) => {
-  const products = await query(`
-    SELECT p.*,
-      CASE WHEN s.id IS NULL THEN NULL ELSE row_to_json(s.*) END AS store
-    FROM products p
-    LEFT JOIN stores s ON p.store_id = s.id
-    WHERE p.stock >= 0
-    ORDER BY p.created_at DESC
-  `);
-
+export async function listProducts(_req: Request, res: Response) {
+  const products = await productService.getAllProducts();
   res.status(200).json({ success: true, data: products });
-});
+}
 
-router.get("/:id", async (req: Request, res: Response) => {
-  const id = req.params.id as string;
-  const product = await queryOne(
-    `
-    SELECT p.*,
-      CASE WHEN s.id IS NULL THEN NULL ELSE row_to_json(s.*) END AS store
-    FROM products p
-    LEFT JOIN stores s ON p.store_id = s.id
-    WHERE p.id = $1
-    `,
-    [id]
-  );
-
+export async function getProduct(req: Request, res: Response) {
+  const product = await productService.getProductById(req.params.id as string);
   if (!product) {
     res.status(404).json({ success: false, message: "Product not found" });
     return;
   }
-
   res.status(200).json({ success: true, data: product });
-});
+}
 
-export default router;

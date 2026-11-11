@@ -1,12 +1,8 @@
-import { Router, Request, Response } from "express";
-import { query, queryOne, getClient, toCamel } from "../db";
-import { verifyToken, requireRole, createAppError } from "../auth";
+import { query, queryOne, getClient, toCamel } from "../../database/query";
+import { createAppError } from "../../middleware/error";
 
-const router = Router();
-router.use(verifyToken, requireRole(["DELIVERY"]));
-
-router.get("/available", async (_req: Request, res: Response) => {
-  const orders = await query(
+export async function getAvailableOrders() {
+  return await query(
     `SELECT o.*,
        COALESCE((SELECT json_agg(row_to_json(oi.*)) FROM order_items oi WHERE oi.order_id = o.id), '[]'::json) AS items,
        CASE WHEN s.id IS NULL THEN NULL ELSE row_to_json(s.*) END AS store,
@@ -17,14 +13,9 @@ router.get("/available", async (_req: Request, res: Response) => {
      WHERE o.status = 'PACKED' AND o.delivery_partner_id IS NULL
      ORDER BY o.created_at DESC`
   );
+}
 
-  res.status(200).json({ success: true, data: orders });
-});
-
-router.post("/accept/:orderId", async (req: Request, res: Response) => {
-  const deliveryPartnerId = req.user!.userId;
-  const orderId = req.params.orderId as string;
-
+export async function acceptOrder(deliveryPartnerId: string, orderId: string) {
   const client = await getClient();
   try {
     await client.query("BEGIN");
@@ -55,19 +46,16 @@ router.post("/accept/:orderId", async (req: Request, res: Response) => {
     );
 
     await client.query("COMMIT");
-    res.status(200).json({ success: true, data: toCamel(updateRes.rows[0]) });
+    return toCamel(updateRes.rows[0]);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
-});
+}
 
-router.put("/complete/:orderId", async (req: Request, res: Response) => {
-  const deliveryPartnerId = req.user!.userId;
-  const orderId = req.params.orderId as string;
-
+export async function completeDelivery(deliveryPartnerId: string, orderId: string) {
   const order = await queryOne("SELECT * FROM orders WHERE id = $1", [orderId]);
   if (!order) throw createAppError("Order not found", 404);
 
@@ -85,16 +73,14 @@ router.put("/complete/:orderId", async (req: Request, res: Response) => {
     );
   }
 
-  const updated = await queryOne(
+  return await queryOne(
     "UPDATE orders SET status = 'DELIVERED', updated_at = NOW() WHERE id = $1 RETURNING *",
     [orderId]
   );
+}
 
-  res.status(200).json({ success: true, data: updated });
-});
-
-router.get("/my-orders", async (req: Request, res: Response) => {
-  const orders = await query(
+export async function getMyDeliveries(deliveryPartnerId: string) {
+  return await query(
     `SELECT o.*,
        COALESCE((SELECT json_agg(row_to_json(oi.*)) FROM order_items oi WHERE oi.order_id = o.id), '[]'::json) AS items,
        CASE WHEN s.id IS NULL THEN NULL ELSE row_to_json(s.*) END AS store,
@@ -104,10 +90,7 @@ router.get("/my-orders", async (req: Request, res: Response) => {
      LEFT JOIN users c ON o.customer_id = c.id
      WHERE o.delivery_partner_id = $1
      ORDER BY o.created_at DESC`,
-    [req.user!.userId]
+    [deliveryPartnerId]
   );
+}
 
-  res.status(200).json({ success: true, data: orders });
-});
-
-export default router;

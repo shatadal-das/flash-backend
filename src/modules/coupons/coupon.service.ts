@@ -1,18 +1,9 @@
-import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { query, queryOne } from "../db";
-import { verifyToken, requireRole, createAppError } from "../auth";
-import {
-  validateBody,
-  createCouponSchema,
-  validateCouponSchema,
-  CreateCouponInput,
-  ValidateCouponInput,
-} from "../validators";
+import { query, queryOne } from "../../database/query";
+import { createAppError } from "../../middleware/error";
+import { CreateCouponInput, ValidateCouponInput } from "./coupon.types";
 
-const router = Router();
-
-async function seedDefaultCoupons() {
+export async function seedDefaultCoupons(): Promise<void> {
   const countRow = await queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM coupons");
   if (countRow && countRow.count > 0) return;
 
@@ -61,7 +52,7 @@ async function seedDefaultCoupons() {
   }
 }
 
-router.get("/", async (_req: Request, res: Response) => {
+export async function getActiveCoupons() {
   await seedDefaultCoupons();
 
   const coupons = await query(
@@ -69,90 +60,81 @@ router.get("/", async (_req: Request, res: Response) => {
   );
 
   const now = Date.now();
-  const activeCoupons = coupons.filter((c) => {
+  return coupons.filter((c) => {
     if (c.expiresAt && new Date(c.expiresAt).getTime() < now) return false;
     if (c.usageLimit !== null && c.usedCount >= c.usageLimit) return false;
     return true;
   });
+}
 
-  res.status(200).json({ success: true, data: activeCoupons });
-});
-
-router.post("/validate", validateBody(validateCouponSchema), async (req: Request, res: Response) => {
-  const { code, orderAmount }: ValidateCouponInput = req.body;
-  const normalizedCode = code.toUpperCase().trim();
-
+export async function validateCoupon(input: ValidateCouponInput) {
+  const normalizedCode = input.code.toUpperCase().trim();
   const coupon = await queryOne("SELECT * FROM coupons WHERE code = $1", [normalizedCode]);
 
   if (!coupon) {
-    res.status(200).json({
+    return {
       success: false,
       valid: false,
       message: `Coupon code "${normalizedCode}" does not exist.`,
       discountAmount: 0,
-      finalTotal: orderAmount,
-    });
-    return;
+      finalTotal: input.orderAmount,
+    };
   }
 
   if (!coupon.isActive) {
-    res.status(200).json({
+    return {
       success: false,
       valid: false,
       message: `Coupon code "${normalizedCode}" is currently inactive.`,
       discountAmount: 0,
-      finalTotal: orderAmount,
-    });
-    return;
+      finalTotal: input.orderAmount,
+    };
   }
 
   if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
-    res.status(200).json({
+    return {
       success: false,
       valid: false,
       message: `Coupon code "${normalizedCode}" has expired.`,
       discountAmount: 0,
-      finalTotal: orderAmount,
-    });
-    return;
+      finalTotal: input.orderAmount,
+    };
   }
 
   if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
-    res.status(200).json({
+    return {
       success: false,
       valid: false,
       message: `Coupon code "${normalizedCode}" has reached its maximum usage limit.`,
       discountAmount: 0,
-      finalTotal: orderAmount,
-    });
-    return;
+      finalTotal: input.orderAmount,
+    };
   }
 
-  if (orderAmount < coupon.minOrderAmount) {
-    res.status(200).json({
+  if (input.orderAmount < coupon.minOrderAmount) {
+    return {
       success: false,
       valid: false,
       message: `Minimum order amount of $${coupon.minOrderAmount.toFixed(2)} required for this coupon.`,
       discountAmount: 0,
-      finalTotal: orderAmount,
-    });
-    return;
+      finalTotal: input.orderAmount,
+    };
   }
 
   let discount = 0;
   if (coupon.discountType === "PERCENTAGE") {
-    discount = orderAmount * (coupon.discountValue / 100);
+    discount = input.orderAmount * (coupon.discountValue / 100);
     if (coupon.maxDiscount !== null && coupon.maxDiscount > 0) {
       discount = Math.min(discount, coupon.maxDiscount);
     }
   } else {
-    discount = Math.min(coupon.discountValue, orderAmount);
+    discount = Math.min(coupon.discountValue, input.orderAmount);
   }
 
   discount = Math.round(discount * 100) / 100;
-  const finalTotal = Math.max(0, Math.round((orderAmount - discount) * 100) / 100);
+  const finalTotal = Math.max(0, Math.round((input.orderAmount - discount) * 100) / 100);
 
-  res.status(200).json({
+  return {
     success: true,
     valid: true,
     message: `Coupon applied: ${
@@ -171,52 +153,37 @@ router.post("/validate", validateBody(validateCouponSchema), async (req: Request
     },
     discountAmount: discount,
     finalTotal,
-  });
-});
+  };
+}
 
-router.post(
-  "/",
-  verifyToken,
-  requireRole(["ADMIN", "VENDOR"]),
-  validateBody(createCouponSchema),
-  async (req: Request, res: Response) => {
-    const input: CreateCouponInput = req.body;
-    const code = input.code.toUpperCase().trim();
-
-    const existing = await queryOne("SELECT id FROM coupons WHERE code = $1", [code]);
-    if (existing) {
-      throw createAppError(`Coupon with code "${code}" already exists`, 400);
-    }
-
-    const couponId = crypto.randomUUID();
-    const coupon = await queryOne(
-      `INSERT INTO coupons (
-         id, code, description, discount_type, discount_value,
-         min_order_amount, max_discount, expires_at, is_active,
-         usage_limit, used_count
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)
-       RETURNING *`,
-      [
-        couponId,
-        code,
-        input.description ?? null,
-        input.discountType,
-        input.discountValue,
-        input.minOrderAmount ?? 0,
-        input.maxDiscount ?? null,
-        input.expiresAt ? new Date(input.expiresAt) : null,
-        input.isActive ?? true,
-        input.usageLimit ?? null,
-      ]
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Coupon created successfully",
-      data: coupon,
-    });
+export async function createCoupon(input: CreateCouponInput) {
+  const code = input.code.toUpperCase().trim();
+  const existing = await queryOne("SELECT id FROM coupons WHERE code = $1", [code]);
+  if (existing) {
+    throw createAppError(`Coupon with code "${code}" already exists`, 400);
   }
-);
 
-export default router;
+  const couponId = crypto.randomUUID();
+  return await queryOne(
+    `INSERT INTO coupons (
+       id, code, description, discount_type, discount_value,
+       min_order_amount, max_discount, expires_at, is_active,
+       usage_limit, used_count
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)
+     RETURNING *`,
+    [
+      couponId,
+      code,
+      input.description ?? null,
+      input.discountType,
+      input.discountValue,
+      input.minOrderAmount ?? 0,
+      input.maxDiscount ?? null,
+      input.expiresAt ? new Date(input.expiresAt) : null,
+      input.isActive ?? true,
+      input.usageLimit ?? null,
+    ]
+  );
+}
+
