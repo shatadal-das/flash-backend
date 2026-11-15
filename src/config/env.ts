@@ -15,6 +15,13 @@ export const config = {
   jwtRefreshExpiresIn: "7d",
   refreshTokenTtlSeconds: 7 * 24 * 60 * 60,
   clientUrl: process.env.CLIENT_URL || "http://localhost:5173",
+  s3: {
+    endpoint: process.env.S3_ENDPOINT || "http://localhost:9000",
+    accessKeyId: process.env.S3_ACCESS_KEY || "admin",
+    secretAccessKey: process.env.S3_SECRET_KEY || "password123",
+    region: process.env.S3_REGION || "us-east-1",
+    bucket: process.env.S3_BUCKET || "flash-images",
+  },
   allowedOrigins: [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -25,4 +32,3 @@ export const config = {
       : []),
   ],
 };
-

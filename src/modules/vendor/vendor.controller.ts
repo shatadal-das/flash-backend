@@ -11,6 +11,11 @@ export async function handleGetStore(req: Request, res: Response) {
   res.status(200).json({ success: true, data: store || null });
 }
 
+export async function handleUpdateStore(req: Request, res: Response) {
+  const store = await vendorService.updateStore(req.user!.userId, req.body);
+  res.status(200).json({ success: true, data: store });
+}
+
 export async function handleCreateProduct(req: Request, res: Response) {
   const product = await vendorService.createProduct(req.user!.userId, req.body);
   res.status(201).json({ success: true, data: product });

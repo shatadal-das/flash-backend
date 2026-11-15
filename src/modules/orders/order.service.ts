@@ -152,7 +152,7 @@ export async function createOrder(customerId: string, input: CreateOrderInput) {
       }
       if (totalAmount < coupon.minOrderAmount) {
         throw createAppError(
-          `Minimum order amount of $${coupon.minOrderAmount.toFixed(2)} required for coupon "${code}"`,
+          `Minimum order amount of ₹${coupon.minOrderAmount.toFixed(2)} required for coupon "${code}"`,
           400
         );
       }

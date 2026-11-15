@@ -14,6 +14,7 @@ import couponRoutes from "./modules/coupons/coupon.routes";
 import deliveryInfoRoutes from "./modules/delivery-info/delivery-info.routes";
 import adminRoutes from "./modules/admin/admin.routes";
 import healthRoutes from "./modules/health/health.routes";
+import uploadRoutes from "./modules/upload/upload.routes";
 
 export const app = express();
 
@@ -60,6 +61,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/delivery-info", deliveryInfoRoutes);
+app.use("/api/upload", uploadRoutes);
 
 app.use(errorHandler);
 

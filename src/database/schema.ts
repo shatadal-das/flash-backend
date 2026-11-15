@@ -1,5 +1,18 @@
 import { pool } from "./pool";
 
+const dropSql = `
+  DROP TABLE IF EXISTS order_items CASCADE;
+  DROP TABLE IF EXISTS orders CASCADE;
+  DROP TABLE IF EXISTS delivery_info CASCADE;
+  DROP TABLE IF EXISTS coupons CASCADE;
+  DROP TABLE IF EXISTS products CASCADE;
+  DROP TABLE IF EXISTS stores CASCADE;
+  DROP TABLE IF EXISTS users CASCADE;
+  DROP TYPE IF EXISTS "UserRole" CASCADE;
+  DROP TYPE IF EXISTS "OrderStatus" CASCADE;
+  DROP TYPE IF EXISTS "DiscountType" CASCADE;
+`;
+
 const schemaSql = `
   CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
@@ -100,9 +113,9 @@ const schemaSql = `
     delivery_longitude DOUBLE PRECISION,
     coupon_id TEXT REFERENCES coupons(id),
     coupon_discount DOUBLE PRECISION NOT NULL DEFAULT 0,
-    customer_id TEXT NOT NULL REFERENCES users(id),
-    store_id TEXT NOT NULL REFERENCES stores(id),
-    delivery_partner_id TEXT REFERENCES users(id),
+    customer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    delivery_partner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
   );
@@ -114,7 +127,7 @@ const schemaSql = `
     size TEXT NOT NULL,
     color TEXT NOT NULL,
     order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    product_id TEXT NOT NULL REFERENCES products(id),
+    product_id TEXT REFERENCES products(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
   );
 
@@ -146,3 +159,7 @@ export async function initDb(): Promise<void> {
   await pool.query(schemaSql);
 }
 
+export async function resetDb(): Promise<void> {
+  await pool.query(dropSql);
+  await pool.query(schemaSql);
+}

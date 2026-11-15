@@ -6,7 +6,7 @@ import { queryOne } from "../../database/query";
 import { cache } from "../../events/cache";
 import { createAppError } from "../../middleware/error";
 import { JwtPayload } from "../../middleware/auth";
-import { RegisterInput, LoginInput, RefreshInput } from "./auth.types";
+import { RegisterInput, UpdateProfileInput, LoginInput, RefreshInput } from "./auth.types";
 
 export interface UserRecord {
   id: string;
@@ -46,9 +46,27 @@ export async function register(input: RegisterInput) {
     const user = await queryOne<UserRecord>(
       `INSERT INTO users (id, email, password, name, phone, role)
        VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, name, role`,
+       RETURNING id, email, name, phone, role`,
       [userId, email, hashedPassword, input.name.trim(), input.phone?.trim() ?? null, input.role]
     );
+
+    if (input.address && input.address.trim()) {
+      const addressId = crypto.randomUUID();
+      await queryOne(
+        `INSERT INTO delivery_info (id, user_id, label, name, phone, email, address, city, pincode, is_default)
+         VALUES ($1, $2, 'Home', $3, $4, $5, $6, $7, $8, TRUE)`,
+        [
+          addressId,
+          userId,
+          input.name.trim(),
+          input.phone?.trim() || "N/A",
+          email,
+          input.address.trim(),
+          input.city?.trim() || null,
+          input.pincode?.trim() || null,
+        ]
+      );
+    }
 
     const tokenPayload: JwtPayload = { userId: user!.id, role: user!.role };
     const accessToken = generateAccessToken(tokenPayload);
@@ -72,7 +90,7 @@ export async function register(input: RegisterInput) {
 export async function login(input: LoginInput) {
   const email = input.email.trim().toLowerCase();
   const user = await queryOne<UserRecord>(
-    "SELECT id, email, password, name, role FROM users WHERE LOWER(email) = $1",
+    "SELECT id, email, password, name, phone, role FROM users WHERE LOWER(email) = $1",
     [email]
   );
 
@@ -91,10 +109,95 @@ export async function login(input: LoginInput) {
       id: user.id,
       email: user.email,
       name: user.name,
+      phone: user.phone,
       role: user.role,
     },
     accessToken,
     refreshToken,
+  };
+}
+
+export async function getProfile(userId: string) {
+  const user = await queryOne<UserRecord>(
+    "SELECT id, email, name, phone, role FROM users WHERE id = $1",
+    [userId]
+  );
+  if (!user) {
+    throw createAppError("User not found", 404);
+  }
+  const defaultAddress = await queryOne(
+    "SELECT * FROM delivery_info WHERE user_id = $1 AND is_default = TRUE",
+    [userId]
+  );
+  return {
+    ...user,
+    defaultAddress: defaultAddress || null,
+  };
+}
+
+export async function updateProfile(userId: string, input: UpdateProfileInput) {
+  const user = await queryOne<UserRecord>(
+    `UPDATE users SET
+       name = COALESCE($2, name),
+       phone = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE phone END,
+       updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, email, name, phone, role`,
+    [userId, input.name?.trim() ?? null, input.phone?.trim() ?? null]
+  );
+  if (!user) {
+    throw createAppError("User not found", 404);
+  }
+
+  if (input.address && input.address.trim()) {
+    const existing = await queryOne(
+      "SELECT id FROM delivery_info WHERE user_id = $1 AND is_default = TRUE",
+      [userId]
+    );
+    if (existing) {
+      await queryOne(
+        `UPDATE delivery_info SET
+           address = $2,
+           city = COALESCE($3, city),
+           pincode = COALESCE($4, pincode),
+           phone = COALESCE($5, phone),
+           updated_at = NOW()
+         WHERE id = $1`,
+        [
+          existing.id,
+          input.address.trim(),
+          input.city?.trim() ?? null,
+          input.pincode?.trim() ?? null,
+          input.phone?.trim() ?? null,
+        ]
+      );
+    } else {
+      const addressId = crypto.randomUUID();
+      await queryOne(
+        `INSERT INTO delivery_info (id, user_id, label, name, phone, email, address, city, pincode, is_default)
+         VALUES ($1, $2, 'Home', $3, $4, $5, $6, $7, $8, TRUE)`,
+        [
+          addressId,
+          userId,
+          user.name,
+          user.phone || "N/A",
+          user.email,
+          input.address.trim(),
+          input.city?.trim() || null,
+          input.pincode?.trim() || null,
+        ]
+      );
+    }
+  }
+
+  const defaultAddress = await queryOne(
+    "SELECT * FROM delivery_info WHERE user_id = $1 AND is_default = TRUE",
+    [userId]
+  );
+
+  return {
+    ...user,
+    defaultAddress: defaultAddress || null,
   };
 }
 
@@ -129,4 +232,3 @@ export async function refresh(input: RefreshInput) {
 export async function logout(userId: string): Promise<void> {
   await cache.del(`refresh_token:${userId}`);
 }
-

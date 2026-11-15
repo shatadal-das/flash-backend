@@ -3,12 +3,14 @@ import { verifyToken, requireRole } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import {
   createStoreSchema,
+  updateStoreSchema,
   createProductSchema,
   updateProductSchema,
 } from "./vendor.types";
 import {
   handleCreateStore,
   handleGetStore,
+  handleUpdateStore,
   handleCreateProduct,
   handleListProducts,
   handleGetProduct,
@@ -22,6 +24,7 @@ router.use(verifyToken, requireRole(["VENDOR"]));
 
 router.post("/store", validateBody(createStoreSchema), handleCreateStore);
 router.get("/store", handleGetStore);
+router.put("/store", validateBody(updateStoreSchema), handleUpdateStore);
 
 router.post("/products", validateBody(createProductSchema), handleCreateProduct);
 router.get("/products", handleListProducts);

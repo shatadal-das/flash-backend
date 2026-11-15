@@ -10,8 +10,19 @@ export const registerSchema = z.object({
     .min(8, "Password must be at least 8 characters")
     .max(128, "Password must be at most 128 characters"),
   name: z.string().min(1, "Name is required").max(100),
-  phone: z.string().optional(),
+  phone: z.string().optional().or(z.literal("")),
+  address: z.string().optional().or(z.literal("")),
+  city: z.string().optional().or(z.literal("")),
+  pincode: z.string().optional().or(z.literal("")),
   role: z.enum(ROLES).default("CUSTOMER"),
+});
+
+export const updateProfileSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  phone: z.string().optional().or(z.literal("")),
+  address: z.string().optional().or(z.literal("")),
+  city: z.string().optional().or(z.literal("")),
+  pincode: z.string().optional().or(z.literal("")),
 });
 
 export const loginSchema = z.object({
@@ -24,6 +35,6 @@ export const refreshSchema = z.object({
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RefreshInput = z.infer<typeof refreshSchema>;
-
